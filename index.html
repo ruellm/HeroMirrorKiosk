@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Hero Mirror Kiosk</title>
+  <link rel="icon" href="data:,">
+</head>
+<body>
+  <div id="stage">
+    <canvas id="gl"></canvas>
+    <canvas id="debug"></canvas>
+    <div id="prompt" class="overlay-text" hidden></div>
+    <div id="countdown" class="overlay-text" hidden></div>
+    <div id="result" hidden></div>
+    <div id="flash"></div>
+    <div id="notice" hidden></div>
+  </div>
+  <div id="videos"></div>
+  <div id="panel" hidden></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

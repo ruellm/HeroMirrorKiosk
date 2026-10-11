@@ -1,0 +1,720 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Chroma key test</title>
+<style>
+  :root {
+    --bg: #1b1d21; --panel: #24272d; --line: #353941; --text: #d8dbe2; --muted: #8b919c; --accent: #5aa9ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.4 system-ui, Segoe UI, sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  button, select, input[type=file] { font: inherit; color: inherit; }
+  button, select {
+    background: #2f333b; border: 1px solid var(--line); border-radius: 4px; padding: 4px 10px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover { background: #3a3f49; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.active { border-color: var(--accent); color: var(--accent); }
+
+  #top {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap;
+  }
+  #top .grow { flex: 1; }
+  #scrub { flex: 1; min-width: 160px; }
+  #timeinfo { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+
+  #main { flex: 1; display: flex; min-height: 0; }
+  #stage {
+    flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-width: 0; padding: 8px; user-select: none;
+  }
+  #labels { display: flex; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  #labels span { text-align: center; }
+  #gl { display: block; background: #000; cursor: grab; }
+  #gl.dragging { cursor: grabbing; }
+  #drop {
+    position: absolute; inset: 8px; display: flex; align-items: center; justify-content: center; text-align: center;
+    border: 2px dashed var(--line); border-radius: 8px; color: var(--muted); pointer-events: none;
+  }
+  #drop.hidden { display: none; }
+  body.dragover #drop { border-color: var(--accent); color: var(--accent); display: flex; }
+
+  #side {
+    width: 370px; flex: none; border-left: 1px solid var(--line); background: var(--panel); padding: 10px 12px;
+    overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 10px;
+  }
+  fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 0; }
+  legend { color: var(--muted); padding: 0 4px; font-size: 12px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; min-width: 0; }
+  .row > label { width: 76px; flex: none; }
+  .row label.inline { width: auto; display: flex; align-items: center; gap: 4px; }
+  .row input[type=range] { flex: 1; min-width: 0; }
+  .row .val { width: 84px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; white-space: nowrap; }
+  .row input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var(--line); background: none; }
+  .hint { color: var(--muted); font-size: 12px; }
+  #status { color: var(--muted); font-size: 12px; white-space: pre-wrap; }
+  #settingsOut {
+    width: 100%; height: 130px; background: #171a1f; color: var(--text); border: 1px solid var(--line);
+    font: 11px/1.3 Consolas, monospace; resize: vertical;
+  }
+  #video { position: fixed; left: -10px; top: -10px; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+  #bgfile { display: none; }
+</style>
+</head>
+<body>
+
+<div id="top">
+  <input type="file" id="file" accept="video/mp4,video/*">
+  <button id="restart" title="Restart">|&#9664;&#9664;</button>
+  <button id="stepBack" title="Step back one frame (,)">&#9664;|</button>
+  <button id="play" title="Play / pause (space)">Play</button>
+  <button id="stepFwd" title="Step forward one frame (.)">|&#9654;</button>
+  <label><input type="checkbox" id="loop" checked> Loop</label>
+  <select id="speed">
+    <option value="0.25">0.25x</option>
+    <option value="0.5">0.5x</option>
+    <option value="1" selected>1x</option>
+  </select>
+  <input type="range" id="scrub" min="0" max="1" step="0.001" value="0">
+  <span id="timeinfo">0.000 / 0.000 s</span>
+</div>
+
+<div id="main">
+  <div id="stage">
+    <div id="labels"><span id="labelL">Original (click to sample key)</span><span id="labelR">Keyed</span></div>
+    <canvas id="gl"></canvas>
+    <div id="drop">Drop an MP4 here or use the file picker</div>
+  </div>
+
+  <div id="side">
+    <fieldset>
+      <legend>Key</legend>
+      <div class="row"><label>Key mode</label>
+        <select id="keyMode"><option value="0">Chroma distance</option><option value="1">Color difference</option></select>
+      </div>
+      <div class="row"><label>Key color</label><input type="color" id="keyColor" value="#00b140"><span class="val" id="keyColorVal">#00b140</span></div>
+      <div class="row"><label>Tolerance</label><input type="range" id="tol" min="0" max="0.5" step="0.001" value="0.10"><span class="val" id="tolVal"></span></div>
+      <div class="row"><label>Softness</label><input type="range" id="soft" min="0" max="0.5" step="0.001" value="0.08"><span class="val" id="softVal"></span></div>
+      <div class="row"><label>Spill</label><input type="range" id="spill" min="0" max="1" step="0.01" value="0.8"><span class="val" id="spillVal"></span></div>
+      <div class="row"><label>Spill balance</label><input type="range" id="spillBal" min="0" max="1" step="0.01" value="0.5"><span class="val" id="spillBalVal"></span></div>
+      <div class="row"><label>Choke</label><input type="range" id="choke" min="0" max="3" step="0.1" value="0"><span class="val" id="chokeVal"></span></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Crop insets (alpha 0 outside)</legend>
+      <div class="row"><label>Left</label><input type="range" id="cropL" min="0" max="0.5" step="0.001" value="0"><span class="val" id="cropLVal"></span></div>
+      <div class="row"><label>Right</label><input type="range" id="cropR" min="0" max="0.5" step="0.001" value="0"><span class="val" id="cropRVal"></span></div>
+      <div class="row"><label>Top</label><input type="range" id="cropT" min="0" max="0.5" step="0.001" value="0"><span class="val" id="cropTVal"></span></div>
+      <div class="row"><label>Bottom</label><input type="range" id="cropB" min="0" max="0.5" step="0.001" value="0"><span class="val" id="cropBVal"></span></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>View</legend>
+      <div class="row"><label>Right panel</label>
+        <select id="viewMode"><option value="1">Composite</option><option value="2">Alpha matte</option></select>
+      </div>
+      <div class="row"><label>Background</label>
+        <select id="bgMode">
+          <option value="0">Checkerboard</option>
+          <option value="1">Black</option>
+          <option value="2">White</option>
+          <option value="3">Mid gray</option>
+          <option value="4">Magenta</option>
+          <option value="5">Custom image</option>
+        </select>
+        <button id="bgPick">Image...</button>
+        <input type="file" id="bgfile" accept="image/*">
+      </div>
+      <div class="row"><label>Sampling</label><label class="inline"><input type="checkbox" id="nearest"> Nearest, no smoothing</label></div>
+      <div class="row"><label>Zoom</label><span class="val" id="zoomVal" style="text-align:left">1.00x</span><button id="zoomReset">Reset view</button></div>
+      <div class="hint">Wheel to zoom, drag to pan. Both panels move together.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Settings</legend>
+      <div class="row"><button id="copy">Copy settings</button><span class="hint" id="copyMsg"></span></div>
+      <textarea id="settingsOut" readonly spellcheck="false"></textarea>
+    </fieldset>
+
+    <div id="status">Waiting for video.</div>
+  </div>
+</div>
+
+<video id="video" muted playsinline preload="auto"></video>
+
+<script>
+'use strict';
+
+const VS = `#version 300 es
+out vec2 v_uv;
+void main() {
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+  v_uv = vec2(p.x, 1.0 - p.y);
+}`;
+
+const FS = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+out vec4 o;
+
+uniform sampler2D u_video;
+uniform sampler2D u_bg;
+uniform vec2 u_bgSize;
+uniform float u_aspect;
+uniform vec3 u_key;
+uniform float u_tol;
+uniform float u_soft;
+uniform float u_spill;
+uniform float u_spillBal;
+uniform int u_keyMode;
+uniform float u_choke;
+uniform vec2 u_videoSize;
+uniform vec4 u_crop;
+uniform int u_mode;
+uniform int u_bgMode;
+uniform float u_zoom;
+uniform vec2 u_center;
+uniform vec2 u_panelPx;
+
+vec2 chroma(vec3 c) {
+  return vec2(-0.168736 * c.r - 0.331264 * c.g + 0.5 * c.b,
+               0.5 * c.r - 0.418688 * c.g - 0.081312 * c.b);
+}
+
+float keyAlpha(vec3 c) {
+  if (u_keyMode == 1) {
+    float d = (c.g - max(c.r, c.b)) / max(c.g, 0.15);
+    float thr = 1.0 - 2.0 * u_tol;
+    return 1.0 - smoothstep(thr - max(2.0 * u_soft, 0.001), thr, d);
+  }
+  float d = distance(chroma(c), chroma(u_key));
+  return smoothstep(u_tol, u_tol + max(u_soft, 0.0005), d);
+}
+
+float matte(vec2 uv) {
+  float a = keyAlpha(texture(u_video, uv).rgb);
+  if (u_choke <= 0.0) return a;
+  vec2 t = u_choke / u_videoSize;
+  for (int j = -1; j <= 1; j++)
+    for (int i = -1; i <= 1; i++) {
+      if (i == 0 && j == 0) continue;
+      a = min(a, keyAlpha(texture(u_video, uv + vec2(float(i), float(j)) * t).rgb));
+    }
+  return a;
+}
+
+vec3 background(vec2 uv) {
+  if (u_bgMode == 1) return vec3(0.0);
+  if (u_bgMode == 2) return vec3(1.0);
+  if (u_bgMode == 3) return vec3(0.5);
+  if (u_bgMode == 4) return vec3(1.0, 0.0, 1.0);
+  if (u_bgMode == 5) {
+    float ba = u_bgSize.x / max(u_bgSize.y, 1.0);
+    vec2 b = uv;
+    if (ba > u_aspect) b.x = (uv.x - 0.5) * (u_aspect / ba) + 0.5;
+    else b.y = (uv.y - 0.5) * (ba / u_aspect) + 0.5;
+    return texture(u_bg, b).rgb;
+  }
+  float c = mod(floor(gl_FragCoord.x / 16.0) + floor(gl_FragCoord.y / 16.0), 2.0);
+  return vec3(mix(0.35, 0.65, c));
+}
+
+void main() {
+  vec2 uv = (v_uv - 0.5) / u_zoom + u_center;
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { o = vec4(0.1, 0.1, 0.12, 1.0); return; }
+
+  vec3 c = texture(u_video, uv).rgb;
+  bool inside = uv.x >= u_crop.x && uv.x <= 1.0 - u_crop.y && uv.y >= u_crop.z && uv.y <= 1.0 - u_crop.w;
+
+  if (u_mode == 0) {
+    vec2 px = 1.5 / (u_panelPx * u_zoom);
+    bool nearX = (u_crop.x > 0.0 && abs(uv.x - u_crop.x) < px.x) || (u_crop.y > 0.0 && abs(uv.x - (1.0 - u_crop.y)) < px.x);
+    bool nearY = (u_crop.z > 0.0 && abs(uv.y - u_crop.z) < px.y) || (u_crop.w > 0.0 && abs(uv.y - (1.0 - u_crop.w)) < px.y);
+    bool inX = uv.x >= u_crop.x && uv.x <= 1.0 - u_crop.y;
+    bool inY = uv.y >= u_crop.z && uv.y <= 1.0 - u_crop.w;
+    if ((nearX && inY) || (nearY && inX)) c = vec3(1.0, 0.3, 0.1);
+    o = vec4(c, 1.0);
+    return;
+  }
+
+  float a = matte(uv);
+  if (!inside) a = 0.0;
+
+  if (u_mode == 2) { o = vec4(vec3(a), 1.0); return; }
+
+  float limit = mix(max(c.r, c.b), (c.r + c.b) * 0.5, u_spillBal);
+  c.g = mix(c.g, min(c.g, limit), u_spill);
+  o = vec4(mix(background(uv), c, a), 1.0);
+}`;
+
+const $ = id => document.getElementById(id);
+const video = $('video');
+const canvas = $('gl');
+const status = $('status');
+const ctl = {
+  keyMode: $('keyMode'), keyColor: $('keyColor'), tol: $('tol'), soft: $('soft'), spill: $('spill'),
+  spillBal: $('spillBal'), choke: $('choke'),
+  cropL: $('cropL'), cropR: $('cropR'), cropT: $('cropT'), cropB: $('cropB'),
+  viewMode: $('viewMode'), bgMode: $('bgMode'), nearest: $('nearest'),
+};
+
+const state = {
+  loaded: false, vw: 0, vh: 0, fps: 30, fpsMeasured: false,
+  zoom: 1, cx: 0.5, cy: 0.5,
+  panelW: 0, panelH: 0, gap: 8, dpr: 1,
+  mediaTime: null, bgW: 0, bgH: 0, hasBg: false,
+  blobUrl: null, rvfcId: 0, rafId: 0, renderQueued: false,
+};
+const fpsSamples = [];
+let scrubbing = false;
+
+// GL setup
+const gl = canvas.getContext('webgl2', { antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: true });
+let prog = null, U = {};
+let videoTex = null, bgTex = null;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error('Shader: ' + gl.getShaderInfoLog(s));
+  return s;
+}
+
+function initGL() {
+  if (!gl) throw new Error('WebGL2 not available');
+  prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error('Link: ' + gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+  for (const n of ['u_video','u_bg','u_bgSize','u_aspect','u_key','u_tol','u_soft','u_spill','u_spillBal','u_keyMode','u_choke','u_videoSize','u_crop','u_mode','u_bgMode','u_zoom','u_center','u_panelPx'])
+    U[n] = gl.getUniformLocation(prog, n);
+  gl.bindVertexArray(gl.createVertexArray());
+
+  videoTex = makeTex();
+  bgTex = makeTex();
+  gl.bindTexture(gl.TEXTURE_2D, bgTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([128, 128, 128, 255]));
+  gl.uniform1i(U.u_video, 0);
+  gl.uniform1i(U.u_bg, 1);
+  gl.enable(gl.SCISSOR_TEST);
+}
+
+function makeTex() {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  return t;
+}
+
+function setFilter() {
+  const f = ctl.nearest.checked ? gl.NEAREST : gl.LINEAR;
+  gl.bindTexture(gl.TEXTURE_2D, videoTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);
+}
+
+function hexToRgb(h) {
+  return [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
+}
+
+function uploadVideo() {
+  if (video.readyState < 2) return false;
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, videoTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+  return true;
+}
+
+function render() {
+  state.renderQueued = false;
+  if (!state.loaded || !prog) return;
+  uploadVideo();
+
+  const W = canvas.width, H = canvas.height;
+  gl.viewport(0, 0, W, H);
+  gl.scissor(0, 0, W, H);
+  gl.clearColor(0.106, 0.114, 0.129, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  const pw = Math.round(state.panelW * state.dpr), ph = Math.round(state.panelH * state.dpr);
+  const gap = Math.round(state.gap * state.dpr);
+
+  gl.useProgram(prog);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, videoTex);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, bgTex);
+  gl.uniform2f(U.u_bgSize, state.bgW, state.bgH);
+  gl.uniform1f(U.u_aspect, state.vw / state.vh);
+  const k = hexToRgb(ctl.keyColor.value);
+  gl.uniform3f(U.u_key, k[0], k[1], k[2]);
+  gl.uniform1f(U.u_tol, +ctl.tol.value);
+  gl.uniform1f(U.u_soft, +ctl.soft.value);
+  gl.uniform1f(U.u_spill, +ctl.spill.value);
+  gl.uniform1f(U.u_spillBal, +ctl.spillBal.value);
+  gl.uniform1i(U.u_keyMode, +ctl.keyMode.value);
+  gl.uniform1f(U.u_choke, +ctl.choke.value);
+  gl.uniform2f(U.u_videoSize, state.vw, state.vh);
+  gl.uniform4f(U.u_crop, +ctl.cropL.value, +ctl.cropR.value, +ctl.cropT.value, +ctl.cropB.value);
+  gl.uniform1i(U.u_bgMode, state.hasBg || +ctl.bgMode.value !== 5 ? +ctl.bgMode.value : 0);
+  gl.uniform1f(U.u_zoom, state.zoom);
+  gl.uniform2f(U.u_center, state.cx, state.cy);
+  gl.uniform2f(U.u_panelPx, pw, ph);
+
+  gl.viewport(0, 0, pw, ph); gl.scissor(0, 0, pw, ph);
+  gl.uniform1i(U.u_mode, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+  gl.viewport(pw + gap, 0, pw, ph); gl.scissor(pw + gap, 0, pw, ph);
+  gl.uniform1i(U.u_mode, +ctl.viewMode.value);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+  updateTimeInfo();
+}
+
+function scheduleRender() {
+  if (state.renderQueued) return;
+  state.renderQueued = true;
+  requestAnimationFrame(render);
+}
+
+// Layout
+function layout() {
+  if (!state.loaded) return;
+  const stage = $('stage');
+  const availW = stage.clientWidth - 16, availH = stage.clientHeight - 16 - $('labels').offsetHeight - 4;
+  const aspect = state.vw / state.vh;
+  let ph = availH, pw = ph * aspect;
+  if (pw * 2 + state.gap > availW) { pw = (availW - state.gap) / 2; ph = pw / aspect; }
+  state.panelW = Math.max(1, Math.floor(pw)); state.panelH = Math.max(1, Math.floor(ph));
+  state.dpr = window.devicePixelRatio || 1;
+  const cssW = state.panelW * 2 + state.gap, cssH = state.panelH;
+  canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
+  canvas.width = Math.round(cssW * state.dpr); canvas.height = Math.round(cssH * state.dpr);
+  $('labels').style.width = cssW + 'px';
+  $('labelL').style.width = state.panelW + 'px';
+  $('labelR').style.width = state.panelW + 'px';
+  $('labelR').style.marginLeft = state.gap + 'px';
+  scheduleRender();
+}
+window.addEventListener('resize', layout);
+
+// Video loading
+function loadFile(file) {
+  if (!file) return;
+  if (state.blobUrl) URL.revokeObjectURL(state.blobUrl);
+  state.blobUrl = URL.createObjectURL(file);
+  state.loaded = false; state.fpsMeasured = false; state.fps = 30; fpsSamples.length = 0;
+  state.mediaTime = null;
+  video.pause();
+  video.src = state.blobUrl;
+  status.textContent = 'Loading ' + file.name + '...';
+}
+
+video.addEventListener('loadedmetadata', () => {
+  state.vw = video.videoWidth; state.vh = video.videoHeight;
+  state.loaded = true;
+  $('drop').classList.add('hidden');
+  $('scrub').max = isFinite(video.duration) ? video.duration : 1;
+  video.loop = $('loop').checked;
+  video.playbackRate = +$('speed').value;
+  resetView();
+  layout();
+  startFrameLoop();
+  updateStatus();
+});
+video.addEventListener('durationchange', () => { if (isFinite(video.duration)) { $('scrub').max = video.duration; updateStatus(); } });
+video.addEventListener('loadeddata', scheduleRender);
+video.addEventListener('seeked', scheduleRender);
+video.addEventListener('timeupdate', () => { if (!scrubbing && !state.mediaTime) $('scrub').value = video.currentTime; updateTimeInfo(); });
+video.addEventListener('play', () => { $('play').textContent = 'Pause'; startFrameLoop(); });
+video.addEventListener('pause', () => { $('play').textContent = 'Play'; });
+video.addEventListener('ended', () => { $('play').textContent = 'Play'; });
+video.addEventListener('error', () => { status.textContent = 'Video error: ' + (video.error ? video.error.message || video.error.code : 'unknown'); });
+
+$('file').addEventListener('change', e => loadFile(e.target.files[0]));
+document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragover'); });
+document.addEventListener('dragleave', e => { if (e.relatedTarget === null) document.body.classList.remove('dragover'); });
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  document.body.classList.remove('dragover');
+  const f = [...e.dataTransfer.files].find(f => f.type.startsWith('video/') || /\.(mp4|webm|mov)$/i.test(f.name));
+  if (f) loadFile(f);
+});
+
+// Frame loop
+const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
+function onFrame(now, meta) {
+  state.rvfcId = 0;
+  if (meta) {
+    if (state.mediaTime !== null) {
+      const dt = meta.mediaTime - state.mediaTime;
+      if (dt > 0.004 && dt < 0.2) {
+        fpsSamples.push(dt);
+        if (fpsSamples.length >= 8) {
+          const s = [...fpsSamples].sort((a, b) => a - b);
+          const fps = 1 / s[s.length >> 1];
+          const common = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60];
+          const snap = common.reduce((a, c) => Math.abs(c - fps) < Math.abs(a - fps) ? c : a);
+          state.fps = Math.abs(snap - fps) < 0.6 ? snap : Math.round(fps * 100) / 100;
+          state.fpsMeasured = true;
+          if (fpsSamples.length > 60) fpsSamples.shift();
+          updateStatus();
+        }
+      }
+    }
+    state.mediaTime = meta.mediaTime;
+    if (!scrubbing) $('scrub').value = meta.mediaTime;
+  }
+  render();
+  startFrameLoop();
+}
+
+function startFrameLoop() {
+  if (hasRVFC) {
+    if (!state.rvfcId) state.rvfcId = video.requestVideoFrameCallback(onFrame);
+  } else {
+    cancelAnimationFrame(state.rafId);
+    const tick = () => {
+      render();
+      if (!video.paused && !video.ended) state.rafId = requestAnimationFrame(tick);
+    };
+    state.rafId = requestAnimationFrame(tick);
+  }
+}
+
+// Transport
+function currentFrameTime() {
+  return state.mediaTime !== null && Math.abs(state.mediaTime - video.currentTime) < 0.5 ? state.mediaTime : video.currentTime;
+}
+function stepFrame(dir) {
+  if (!state.loaded) return;
+  video.pause();
+  const n = Math.round(currentFrameTime() * state.fps);
+  let t = (n + dir + 0.5) / state.fps;
+  t = Math.min(Math.max(t, 0), Math.max(0, video.duration - 0.001));
+  state.mediaTime = null;
+  video.currentTime = t;
+}
+$('play').addEventListener('click', () => { if (!state.loaded) return; video.paused || video.ended ? video.play() : video.pause(); });
+$('restart').addEventListener('click', () => { if (!state.loaded) return; state.mediaTime = null; video.currentTime = 0; });
+$('stepBack').addEventListener('click', () => stepFrame(-1));
+$('stepFwd').addEventListener('click', () => stepFrame(1));
+$('loop').addEventListener('change', e => video.loop = e.target.checked);
+$('speed').addEventListener('change', e => video.playbackRate = +e.target.value);
+$('scrub').addEventListener('pointerdown', () => scrubbing = true);
+$('scrub').addEventListener('pointerup', () => scrubbing = false);
+$('scrub').addEventListener('input', e => { if (!state.loaded) return; state.mediaTime = null; video.currentTime = +e.target.value; });
+$('scrub').addEventListener('change', () => scrubbing = false);
+
+document.addEventListener('keydown', e => {
+  const t = e.target.tagName;
+  if (t === 'INPUT' || t === 'SELECT' || t === 'TEXTAREA' || t === 'BUTTON') return;
+  if (e.code === 'Space') { e.preventDefault(); $('play').click(); }
+  else if (e.key === ',') stepFrame(-1);
+  else if (e.key === '.') stepFrame(1);
+});
+
+function fmt(t) { return (t || 0).toFixed(3); }
+function updateTimeInfo() {
+  if (!state.loaded) return;
+  const t = currentFrameTime();
+  $('timeinfo').textContent = fmt(t) + ' / ' + fmt(video.duration) + ' s   frame ' + Math.round(t * state.fps);
+}
+function updateStatus() {
+  if (!state.loaded) return;
+  status.textContent = state.vw + 'x' + state.vh + ', ' + fmt(video.duration) + ' s, fps ' + state.fps +
+    (state.fpsMeasured ? ' (measured)' : ' (assumed)') + (hasRVFC ? '' : ', no requestVideoFrameCallback');
+}
+
+// Controls
+const fmtVal = {
+  tol: v => (+v).toFixed(3), soft: v => (+v).toFixed(3), spill: v => (+v).toFixed(2),
+  crop: (v, px) => (+v * 100).toFixed(1) + '% ' + Math.round(+v * px) + 'px',
+};
+function refreshValues() {
+  $('tolVal').textContent = fmtVal.tol(ctl.tol.value) + (ctl.keyMode.value === '1' ? ' thr ' + (1 - 2 * ctl.tol.value).toFixed(2) : '');
+  $('softVal').textContent = fmtVal.soft(ctl.soft.value);
+  $('spillVal').textContent = fmtVal.spill(ctl.spill.value);
+  $('spillBalVal').textContent = fmtVal.spill(ctl.spillBal.value);
+  $('chokeVal').textContent = (+ctl.choke.value).toFixed(1) + ' px';
+  $('cropLVal').textContent = fmtVal.crop(ctl.cropL.value, state.vw);
+  $('cropRVal').textContent = fmtVal.crop(ctl.cropR.value, state.vw);
+  $('cropTVal').textContent = fmtVal.crop(ctl.cropT.value, state.vh);
+  $('cropBVal').textContent = fmtVal.crop(ctl.cropB.value, state.vh);
+  $('keyColorVal').textContent = ctl.keyColor.value;
+  $('zoomVal').textContent = state.zoom.toFixed(2) + 'x';
+}
+for (const el of Object.values(ctl)) {
+  el.addEventListener('input', () => { refreshValues(); scheduleRender(); });
+  el.addEventListener('change', () => { refreshValues(); scheduleRender(); });
+}
+ctl.nearest.addEventListener('change', setFilter);
+ctl.bgMode.addEventListener('change', () => { if (ctl.bgMode.value === '5' && !state.hasBg) $('bgfile').click(); });
+$('bgPick').addEventListener('click', () => $('bgfile').click());
+$('bgfile').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const img = new Image();
+  img.onload = () => {
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, bgTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    state.bgW = img.naturalWidth; state.bgH = img.naturalHeight; state.hasBg = true;
+    ctl.bgMode.value = '5';
+    URL.revokeObjectURL(img.src);
+    scheduleRender();
+  };
+  img.src = URL.createObjectURL(f);
+});
+
+// Zoom, pan, sampling
+function resetView() { state.zoom = 1; state.cx = 0.5; state.cy = 0.5; refreshValues(); scheduleRender(); }
+$('zoomReset').addEventListener('click', resetView);
+
+function clampCenter() {
+  const half = 0.5 / state.zoom;
+  state.cx = Math.min(Math.max(state.cx, half), 1 - half);
+  state.cy = Math.min(Math.max(state.cy, half), 1 - half);
+}
+
+// Returns panel index and panel-normalized coords for a mouse event, or null in the gap
+function panelPos(e) {
+  const r = canvas.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  let px = x, panel = 0;
+  if (x > state.panelW) { px = x - state.panelW - state.gap; panel = 1; }
+  if (px < 0 || px > state.panelW) return null;
+  return { panel, u: px / state.panelW, v: y / state.panelH };
+}
+function toVideoUV(p) {
+  return { u: (p.u - 0.5) / state.zoom + state.cx, v: (p.v - 0.5) / state.zoom + state.cy };
+}
+
+canvas.addEventListener('wheel', e => {
+  if (!state.loaded) return;
+  e.preventDefault();
+  const p = panelPos(e);
+  if (!p) return;
+  const before = toVideoUV(p);
+  const f = Math.pow(1.15, -Math.sign(e.deltaY));
+  state.zoom = Math.min(Math.max(state.zoom * f, 1), 64);
+  state.cx = before.u - (p.u - 0.5) / state.zoom;
+  state.cy = before.v - (p.v - 0.5) / state.zoom;
+  clampCenter();
+  refreshValues();
+  scheduleRender();
+}, { passive: false });
+
+let drag = null;
+canvas.addEventListener('pointerdown', e => {
+  if (!state.loaded || e.button !== 0) return;
+  const p = panelPos(e);
+  if (!p) return;
+  drag = { x: e.clientX, y: e.clientY, panel: p.panel, moved: false, start: p };
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+});
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+  drag.moved = true;
+  canvas.classList.add('dragging');
+  state.cx -= dx / state.panelW / state.zoom;
+  state.cy -= dy / state.panelH / state.zoom;
+  drag.x = e.clientX; drag.y = e.clientY;
+  clampCenter();
+  scheduleRender();
+});
+canvas.addEventListener('pointerup', e => {
+  if (!drag) return;
+  canvas.classList.remove('dragging');
+  if (!drag.moved && drag.panel === 0) sampleKey(toVideoUV(drag.start));
+  drag = null;
+});
+canvas.addEventListener('pointercancel', () => { drag = null; canvas.classList.remove('dragging'); });
+
+const sampleCanvas = document.createElement('canvas');
+function sampleKey(uv) {
+  if (video.readyState < 2) return;
+  const x = Math.round(uv.u * state.vw), y = Math.round(uv.v * state.vh);
+  const R = 3;
+  sampleCanvas.width = state.vw; sampleCanvas.height = state.vh;
+  const c2 = sampleCanvas.getContext('2d', { willReadFrequently: true });
+  c2.drawImage(video, 0, 0);
+  const x0 = Math.max(0, x - R), y0 = Math.max(0, y - R);
+  const w = Math.min(state.vw, x + R + 1) - x0, h = Math.min(state.vh, y + R + 1) - y0;
+  if (w <= 0 || h <= 0) return;
+  const d = c2.getImageData(x0, y0, w, h).data;
+  let r = 0, g = 0, b = 0, n = d.length / 4;
+  for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+  const hex = '#' + [r, g, b].map(v => Math.round(v / n).toString(16).padStart(2, '0')).join('');
+  ctl.keyColor.value = hex;
+  refreshValues();
+  scheduleRender();
+}
+
+// Settings export
+function settingsJSON() {
+  const k = hexToRgb(ctl.keyColor.value);
+  return JSON.stringify({
+    keyColor: ctl.keyColor.value,
+    keyColorRGB: k.map(v => Math.round(v * 255)),
+    keyMode: ctl.keyMode.value === '1' ? 'colorDifference' : 'chromaDistance',
+    chromaSpace: 'YCbCr BT.601, distance on CbCr only',
+    colorDifference: { formula: '(g - max(r,b)) / max(g, 0.15)', threshold: +(1 - 2 * ctl.tol.value).toFixed(3), band: +(2 * ctl.soft.value).toFixed(3) },
+    tolerance: +ctl.tol.value,
+    softness: +ctl.soft.value,
+    spill: +ctl.spill.value,
+    spillBalance: +ctl.spillBal.value,
+    chokePx: +ctl.choke.value,
+    crop: { left: +ctl.cropL.value, right: +ctl.cropR.value, top: +ctl.cropT.value, bottom: +ctl.cropB.value },
+    cropPx: {
+      left: Math.round(ctl.cropL.value * state.vw), right: Math.round(ctl.cropR.value * state.vw),
+      top: Math.round(ctl.cropT.value * state.vh), bottom: Math.round(ctl.cropB.value * state.vh),
+    },
+    video: { width: state.vw, height: state.vh, duration: video.duration || 0, fps: state.fps, fpsMeasured: state.fpsMeasured },
+    viewMode: ctl.viewMode.selectedOptions[0].text,
+    background: ctl.bgMode.selectedOptions[0].text,
+  }, null, 2);
+}
+$('copy').addEventListener('click', async () => {
+  const txt = settingsJSON();
+  $('settingsOut').value = txt;
+  const msg = $('copyMsg');
+  try {
+    await navigator.clipboard.writeText(txt);
+    msg.textContent = 'Copied.';
+  } catch (err) {
+    $('settingsOut').select();
+    const ok = document.execCommand && document.execCommand('copy');
+    msg.textContent = ok ? 'Copied.' : 'Clipboard blocked, copy from the box below.';
+  }
+  setTimeout(() => msg.textContent = '', 2000);
+});
+
+// Init
+try {
+  initGL();
+  refreshValues();
+  status.textContent = 'WebGL2 ready. Waiting for video.' + (hasRVFC ? '' : ' (no requestVideoFrameCallback, using rAF)');
+} catch (err) {
+  status.textContent = String(err.message || err);
+  $('drop').textContent = status.textContent;
+}
+</script>
+</body>
+</html>
