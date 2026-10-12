@@ -16,10 +16,9 @@ export interface FlowDeps {
   countdown: HTMLElement;
   flash: HTMLElement;
   result: HTMLElement;
+  // Stage taps start the flow only when this returns true.
+  canTapStart: () => boolean;
 }
-
-// Panel toggle zone in the top left, kept clear of tap to start.
-const CORNER_PX = 120;
 
 function timestamp(): string {
   const d = new Date();
@@ -41,13 +40,12 @@ export class Flow {
     d.ring.setAuto();
     this.showPrompt(STRINGS.stepIn);
 
-    d.stage.addEventListener('pointerdown', (e) => {
-      if (e.clientX <= CORNER_PX && e.clientY <= CORNER_PX) return;
+    d.stage.addEventListener('pointerdown', () => {
       if (this.state === 'result') {
         this.armResultTimeout();
         return;
       }
-      this.start();
+      if (d.canTapStart()) this.start();
     });
     document.addEventListener('keydown', (e) => {
       if (e.code !== 'Space') return;

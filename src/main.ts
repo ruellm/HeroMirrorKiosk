@@ -18,15 +18,20 @@ const notice = $('notice');
 const debugCanvas = $('debug') as HTMLCanvasElement;
 const videos = $('videos');
 const panelRoot = $('panel');
+const toggleButton = $('paneltoggle') as HTMLButtonElement;
+// ?kiosk=1 hides the calibration button for installations. The C key still works.
+const kioskMode = new URLSearchParams(location.search).get('kiosk') === '1';
+toggleButton.hidden = kioskMode;
+
+fitStage(stage, toggleButton);
+window.addEventListener('resize', () => fitStage(stage, toggleButton));
+window.addEventListener('orientationchange', () => setTimeout(() => fitStage(stage, toggleButton), 100));
 
 function showNotice(text: string) {
   notice.textContent = text;
   notice.hidden = !text;
 }
 
-fitStage(stage);
-window.addEventListener('resize', () => fitStage(stage));
-window.addEventListener('orientationchange', () => setTimeout(() => fitStage(stage), 100));
 
 const cal = loadCalibration();
 
@@ -96,6 +101,7 @@ export const flow = new Flow({
   countdown: $('countdown'),
   flash: $('flash'),
   result: $('result'),
+  canTapStart: () => !!panelRoot.hidden,
 });
 detection.trigger.onTrigger = () => flow.start();
 
@@ -106,6 +112,7 @@ const panel = new Panel({
   camera,
   detection,
   flow,
+  toggleButton: kioskMode ? null : toggleButton,
   onChange: () => saveCalibration(cal),
 });
 

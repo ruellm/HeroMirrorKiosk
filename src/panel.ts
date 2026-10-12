@@ -18,6 +18,8 @@ export interface PanelDeps {
   camera: Camera;
   detection: Detection;
   flow: Flow;
+  // Visible toggle button over the stage, null when hidden by ?kiosk=1.
+  toggleButton: HTMLButtonElement | null;
   // Called after any calibration value changes.
   onChange: () => void;
 }
@@ -95,7 +97,6 @@ export class Panel {
   private jsonBox: HTMLTextAreaElement;
   private jsonMsg: HTMLElement;
   private selectedClip: ClipId = CLIPS[0].id;
-  private tapTimes: number[] = [];
 
   constructor(private deps: PanelDeps) {
     this.root = deps.root;
@@ -116,6 +117,8 @@ export class Panel {
 
   toggle(show = this.root.hidden) {
     this.root.hidden = !show;
+    const b = this.deps.toggleButton;
+    if (b) b.textContent = show ? '>>' : '<<';
     if (show) this.refreshAll();
   }
 
@@ -126,7 +129,7 @@ export class Panel {
     root.replaceChildren();
 
     root.append(
-      el('div', { class: 'head' }, el('b', {}, 'Calibration'), el('span', { class: 'hint' }, 'C or 3 taps top left')),
+      el('div', { class: 'head' }, el('b', {}, 'Calibration'), el('span', { class: 'hint' }, 'C key or the << button')),
       el('fieldset', {}, el('legend', {}, 'Status'), this.status),
     );
 
@@ -351,16 +354,11 @@ export class Panel {
       if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && (t as HTMLInputElement).type !== 'range'))) return;
       this.toggle();
     });
-    // Three quick taps in the top left corner.
-    window.addEventListener('pointerdown', (e) => {
-      if (e.clientX > 120 || e.clientY > 120) return;
-      const now = performance.now();
-      this.tapTimes = this.tapTimes.filter((t) => now - t < 800);
-      this.tapTimes.push(now);
-      if (this.tapTimes.length >= 3) {
-        this.tapTimes = [];
-        this.toggle();
-      }
-    });
+    const b = this.deps.toggleButton;
+    if (b) {
+      // Stop the tap reaching the stage, which would start the flow.
+      b.addEventListener('pointerdown', (e) => e.stopPropagation());
+      b.addEventListener('click', () => this.toggle());
+    }
   }
 }
