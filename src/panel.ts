@@ -92,28 +92,21 @@ function checkRow(label: string, get: () => boolean, set: (v: boolean) => void):
 
 const FACING_LABEL: Record<string, string> = { user: 'front', environment: 'back' };
 
-// Sheet state on narrow viewports: collapsed to a tab, and the open section.
-interface SheetState {
-  collapsed: boolean;
-  section: string;
-}
-
-function loadSheetState(): SheetState {
+// Collapsed section titles, kept across reloads.
+function loadClosedSections(): Set<string> {
   try {
     const raw = localStorage.getItem(PANEL_STORAGE_KEY);
-    const o = raw ? (JSON.parse(raw) as Partial<SheetState>) : {};
-    return { collapsed: o.collapsed === true, section: typeof o.section === 'string' ? o.section : '' };
+    const o = raw ? (JSON.parse(raw) as { closed?: unknown }) : {};
+    return new Set(Array.isArray(o.closed) ? o.closed.filter((x): x is string => typeof x === 'string') : []);
   } catch {
-    return { collapsed: false, section: '' };
+    return new Set();
   }
 }
 
 export class Panel {
   private root: HTMLElement;
-  private body: HTMLElement;
-  private handleLabel: HTMLElement;
   private sections: HTMLFieldSetElement[] = [];
-  private sheet: SheetState = loadSheetState();
+  private closed = loadClosedSections();
   private bound: Bound[] = [];
   private status: HTMLElement;
   private detectionStatus: HTMLElement;
@@ -126,8 +119,6 @@ export class Panel {
 
   constructor(private deps: PanelDeps) {
     this.root = deps.root;
-    this.body = el('div', { class: 'body' });
-    this.handleLabel = el('span', { class: 'handle-label' });
     this.status = el('pre', { class: 'status' });
     this.detectionStatus = el('pre', { class: 'status' });
     this.flowStatus = el('pre', { class: 'status' });
@@ -136,7 +127,6 @@ export class Panel {
     this.jsonBox = el('textarea', { spellcheck: 'false', rows: 8 });
     this.jsonMsg = el('span', { class: 'hint' });
     this.build();
-    this.installSheet();
     this.installToggles();
     setInterval(() => this.refreshDetection(), 250);
   }
@@ -152,10 +142,22 @@ export class Panel {
     if (show) this.refreshAll();
   }
 
+  // Section with a title that collapses it. The CSS hides the contents of a
+  // closed section only on narrow viewports.
   private section(name: string, ...children: Array<Node | string>): HTMLFieldSetElement {
     const legend = el('legend', {}, name);
     const f = el('fieldset', { 'data-section': name }, legend, ...children);
-    legend.addEventListener('click', () => this.openSection(name));
+    f.classList.toggle('closed', this.closed.has(name));
+    legend.addEventListener('click', () => {
+      if (this.closed.has(name)) this.closed.delete(name);
+      else this.closed.add(name);
+      f.classList.toggle('closed', this.closed.has(name));
+      try {
+        localStorage.setItem(PANEL_STORAGE_KEY, JSON.stringify({ closed: [...this.closed] }));
+      } catch {
+        // storage unavailable
+      }
+    });
     this.sections.push(f);
     return f;
   }
@@ -164,19 +166,15 @@ export class Panel {
     const { cal, player, camera } = this.deps;
     const changed = () => this.deps.onChange();
     const root = this.root;
-    const body = this.body;
-    root.replaceChildren(
-      el('div', { class: 'handle' }, el('span', { class: 'grip' }), this.handleLabel, el('span', { class: 'chev' })),
-      body,
-    );
+    root.replaceChildren();
 
-    body.append(
+    root.append(
       el('div', { class: 'head' }, el('b', {}, 'Calibration'), el('span', { class: 'hint' }, 'C key or the << button')),
       this.section('Status', this.status),
     );
 
     const { flow } = this.deps;
-    body.append(
+    root.append(
       this.section(
         'Flow',
         this.flowStatus,
@@ -195,7 +193,7 @@ export class Panel {
       player.stopSequence();
       fn();
     };
-    body.append(
+    root.append(
       this.section(
         'Playback',
         el(
@@ -220,7 +218,7 @@ export class Panel {
       this.bound.push(b);
       global.append(b.node);
     }
-    body.append(global);
+    root.append(global);
 
     const clipSelect = el('select');
     for (const c of CLIPS) clipSelect.append(el('option', { value: c.id }, c.id + ' (' + c.file + ')'));
@@ -238,7 +236,7 @@ export class Panel {
       this.bound.push(b);
       clipSet.append(b.node);
     }
-    body.append(clipSet);
+    root.append(clipSet);
 
     this.deviceSelect.addEventListener('change', () => {
       cal.camera.deviceId = this.deviceSelect.value;
@@ -275,7 +273,7 @@ export class Panel {
       },
     };
     this.bound.push(mirror, rotation);
-    body.append(
+    root.append(
       this.section(
         'Camera',
         el('div', { class: 'row' }, el('label', {}, 'Device'), this.deviceSelect),
@@ -286,7 +284,7 @@ export class Panel {
 
     const outline = checkRow('Draw clip frame outline', () => cal.showOutline, (v) => { cal.showOutline = v; changed(); });
     this.bound.push(outline);
-    body.append(this.section('View', outline.node));
+    root.append(this.section('View', outline.node));
 
     const r = () => cal.ring;
     const ringSet = this.section('Floor ring');
@@ -302,15 +300,15 @@ export class Panel {
       this.bound.push(b);
       ringSet.append(b.node);
     }
-    body.append(ringSet);
+    root.append(ringSet);
 
     const { detection } = this.deps;
     const detEnable = checkRow('Enable detection', () => cal.detection.enabled, (v) => { cal.detection.enabled = v; changed(); });
     const detDebug = checkRow('Draw ankles and feet point', () => detection.debug, (v) => { detection.debug = v; });
     this.bound.push(detEnable, detDebug);
-    body.append(this.section('Detection', this.detectionStatus, detEnable.node, detDebug.node));
+    root.append(this.section('Detection', this.detectionStatus, detEnable.node, detDebug.node));
 
-    body.append(
+    root.append(
       this.section(
         'Calibration JSON',
         el(
@@ -329,47 +327,6 @@ export class Panel {
         this.jsonBox,
       ),
     );
-  }
-
-  // Bottom sheet behavior on narrow viewports. The CSS decides when the
-  // handle and the one open section rule apply, so this runs everywhere.
-  private installSheet() {
-    const root = this.root;
-    const names = this.sections.map((s) => s.dataset.section ?? '');
-    if (!names.includes(this.sheet.section)) this.sheet.section = names[0] ?? '';
-    this.openSection(this.sheet.section, false);
-    root.classList.toggle('collapsed', this.sheet.collapsed);
-
-    const handle = root.querySelector('.handle') as HTMLElement;
-    handle.addEventListener('click', () => {
-      this.sheet.collapsed = !this.sheet.collapsed;
-      root.classList.toggle('collapsed', this.sheet.collapsed);
-      this.saveSheet();
-    });
-
-    const touched = (e: Event) => {
-      const f = (e.target as Element | null)?.closest('fieldset[data-section]') as HTMLFieldSetElement | null;
-      if (f && f.dataset.section) this.openSection(f.dataset.section);
-    };
-    this.body.addEventListener('pointerdown', touched);
-    this.body.addEventListener('input', touched);
-    this.body.addEventListener('change', touched);
-  }
-
-  private openSection(name: string, save = true) {
-    for (const s of this.sections) s.classList.toggle('open', s.dataset.section === name);
-    this.handleLabel.textContent = name;
-    if (this.sheet.section === name) return;
-    this.sheet.section = name;
-    if (save) this.saveSheet();
-  }
-
-  private saveSheet() {
-    try {
-      localStorage.setItem(PANEL_STORAGE_KEY, JSON.stringify(this.sheet));
-    } catch {
-      // storage unavailable
-    }
   }
 
   private exportToBox() {

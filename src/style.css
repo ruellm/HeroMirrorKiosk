@@ -72,7 +72,6 @@ html, body {
   touch-action: pan-y;
 }
 #panel[hidden] { display: none; }
-#panel .handle { display: none; }
 
 #panel .head {
   display: flex;
@@ -86,6 +85,7 @@ html, body {
   border-radius: 6px;
   padding: 8px 10px;
   margin: 0 0 10px;
+  min-inline-size: 0;
 }
 #panel legend { color: var(--muted); padding: 0 4px; cursor: pointer; }
 
@@ -127,55 +127,20 @@ html, body {
 }
 #panel .hint { color: var(--muted); font-size: 12px; }
 
-/* Narrow viewports: the panel is a bottom sheet over the stage. One section
-   is open at a time and the handle collapses the sheet to a tab. */
+/* Narrow viewports: the panel floats over the right side of the stage and
+   section titles collapse their contents. */
 @media (max-width: 699px) {
   #panel {
-    top: auto;
-    left: 0;
-    width: auto;
-    max-height: 40vh;
-    padding: 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    background: rgba(24, 26, 30, 0.82);
-    border-left: 0;
-    border-top: 1px solid var(--line);
-    border-radius: 12px 12px 0 0;
-    touch-action: none;
-    overscroll-behavior: contain;
-  }
-  #panel[hidden] { display: none; }
-  #panel .handle {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: 10px;
-    min-height: 44px;
-    padding: 0 14px;
-    cursor: pointer;
-    user-select: none;
-    touch-action: manipulation;
-  }
-  #panel .handle .grip {
-    width: 36px;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--muted);
-  }
-  #panel .handle .handle-label { flex: 1; font-weight: 600; }
-  #panel .handle .chev::before { content: '\25BE'; color: var(--muted); }
-  #panel.collapsed .handle .chev::before { content: '\25B4'; }
-  #panel .body {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
+    top: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: min(60vw, 320px);
     padding: 0 12px 12px;
-    touch-action: pan-y;
+    background: rgba(24, 26, 30, 0.82);
+    border: 1px solid var(--line);
+    border-radius: 12px;
     overscroll-behavior: contain;
   }
-  #panel.collapsed .body { display: none; }
   #panel .head { display: none; }
 
   #panel fieldset {
@@ -185,6 +150,7 @@ html, body {
     padding: 0 0 6px;
     margin: 0;
   }
+  #panel fieldset:first-of-type { border-top: 0; }
   #panel legend {
     float: left;
     width: 100%;
@@ -192,13 +158,15 @@ html, body {
     line-height: 20px;
     color: var(--text);
   }
-  #panel legend::after { content: '+'; float: right; color: var(--muted); }
-  #panel fieldset.open legend::after { content: '\2212'; }
+  #panel legend::after { content: '\2212'; float: right; color: var(--muted); }
+  #panel fieldset.closed legend::after { content: '+'; }
   #panel fieldset > :not(legend) { clear: both; }
-  #panel fieldset:not(.open) > :not(legend) { display: none; }
-  #panel fieldset:not(.open) { padding-bottom: 0; }
+  #panel fieldset.closed > :not(legend) { display: none; }
+  #panel fieldset.closed { padding-bottom: 0; }
 
-  #panel .row { min-height: 44px; margin: 0; }
+  #panel .row { flex-wrap: wrap; min-height: 44px; margin: 0; }
+  #panel .row label:first-child { width: 100%; }
+  #panel .row select { flex: 1 1 100%; }
   #panel .row input[type=range] { height: 44px; margin: 0; }
   #panel .row input[type=checkbox] { width: 24px; height: 24px; margin: 0 6px 0 0; }
   #panel button, #panel select, #panel input[type=number] { min-height: 44px; padding: 4px 12px; }
