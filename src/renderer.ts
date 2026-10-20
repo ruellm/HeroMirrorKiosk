@@ -1,3 +1,4 @@
+import type { Rotation } from './calibration';
 import { STAGE_ASPECT, STAGE_HEIGHT, STAGE_WIDTH } from './constants';
 import {
   CAMERA_FS, CHARACTER_FS, CHEVRON_FS, COMPOSITE_FS, FULLSCREEN_VS, OUTLINE_FS, QUAD_VS, RING_FS,
@@ -85,7 +86,7 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser');
     this.gl = gl;
 
-    this.cameraProg = this.build(FULLSCREEN_VS, CAMERA_FS, ['u_flipY', 'u_tex', 'u_scale', 'u_mirror']);
+    this.cameraProg = this.build(FULLSCREEN_VS, CAMERA_FS, ['u_flipY', 'u_tex', 'u_scale', 'u_mirror', 'u_rot']);
     this.compositeProg = this.build(FULLSCREEN_VS, COMPOSITE_FS, ['u_flipY', 'u_tex']);
     this.characterProg = this.build(QUAD_VS, CHARACTER_FS, [
       'u_rect', 'u_video', 'u_key', 'u_tol', 'u_soft', 'u_spill', 'u_spillBal', 'u_keyMode', 'u_choke',
@@ -161,9 +162,10 @@ export class Renderer {
     gl.clear(gl.COLOR_BUFFER_BIT);
   }
 
-  drawCamera(tex: WebGLTexture, videoW: number, videoH: number, mirror: boolean) {
+  // rotation turns the raw frame clockwise before the cover fit.
+  drawCamera(tex: WebGLTexture, videoW: number, videoH: number, mirror: boolean, rotation: Rotation = 0) {
     const gl = this.gl;
-    const va = videoW / videoH;
+    const va = rotation % 180 ? videoH / videoW : videoW / videoH;
     const sx = va > STAGE_ASPECT ? STAGE_ASPECT / va : 1;
     const sy = va > STAGE_ASPECT ? 1 : va / STAGE_ASPECT;
     const p = this.cameraProg;
@@ -174,6 +176,7 @@ export class Renderer {
     gl.uniform1f(p.u.u_flipY, 1);
     gl.uniform2f(p.u.u_scale, sx, sy);
     gl.uniform1f(p.u.u_mirror, mirror ? 1 : 0);
+    gl.uniform1i(p.u.u_rot, rotation / 90);
     gl.disable(gl.BLEND);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }

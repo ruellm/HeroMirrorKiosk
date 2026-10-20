@@ -1,13 +1,16 @@
 import {
   applyCalibration,
+  cameraDeviceKey,
   defaultCalibration,
   exportJSON,
   importJSON,
   type Calibration,
+  type Rotation,
 } from './calibration';
 import type { Camera } from './camera';
 import type { ClipPlayer } from './clips';
 import { CLIPS, type ClipId } from './clips.config';
+import { PANEL_STORAGE_KEY } from './constants';
 import type { Detection } from './detection';
 import type { Flow } from './flow';
 
@@ -87,26 +90,53 @@ function checkRow(label: string, get: () => boolean, set: (v: boolean) => void):
   return { node: el('label', { class: 'row check' }, box, label), refresh };
 }
 
+const FACING_LABEL: Record<string, string> = { user: 'front', environment: 'back' };
+
+// Sheet state on narrow viewports: collapsed to a tab, and the open section.
+interface SheetState {
+  collapsed: boolean;
+  section: string;
+}
+
+function loadSheetState(): SheetState {
+  try {
+    const raw = localStorage.getItem(PANEL_STORAGE_KEY);
+    const o = raw ? (JSON.parse(raw) as Partial<SheetState>) : {};
+    return { collapsed: o.collapsed === true, section: typeof o.section === 'string' ? o.section : '' };
+  } catch {
+    return { collapsed: false, section: '' };
+  }
+}
+
 export class Panel {
   private root: HTMLElement;
+  private body: HTMLElement;
+  private handleLabel: HTMLElement;
+  private sections: HTMLFieldSetElement[] = [];
+  private sheet: SheetState = loadSheetState();
   private bound: Bound[] = [];
   private status: HTMLElement;
   private detectionStatus: HTMLElement;
   private flowStatus: HTMLElement;
   private deviceSelect: HTMLSelectElement;
+  private rotationSelect: HTMLSelectElement;
   private jsonBox: HTMLTextAreaElement;
   private jsonMsg: HTMLElement;
   private selectedClip: ClipId = CLIPS[0].id;
 
   constructor(private deps: PanelDeps) {
     this.root = deps.root;
+    this.body = el('div', { class: 'body' });
+    this.handleLabel = el('span', { class: 'handle-label' });
     this.status = el('pre', { class: 'status' });
     this.detectionStatus = el('pre', { class: 'status' });
     this.flowStatus = el('pre', { class: 'status' });
     this.deviceSelect = el('select');
+    this.rotationSelect = el('select');
     this.jsonBox = el('textarea', { spellcheck: 'false', rows: 8 });
     this.jsonMsg = el('span', { class: 'hint' });
     this.build();
+    this.installSheet();
     this.installToggles();
     setInterval(() => this.refreshDetection(), 250);
   }
@@ -122,23 +152,33 @@ export class Panel {
     if (show) this.refreshAll();
   }
 
+  private section(name: string, ...children: Array<Node | string>): HTMLFieldSetElement {
+    const legend = el('legend', {}, name);
+    const f = el('fieldset', { 'data-section': name }, legend, ...children);
+    legend.addEventListener('click', () => this.openSection(name));
+    this.sections.push(f);
+    return f;
+  }
+
   private build() {
     const { cal, player, camera } = this.deps;
     const changed = () => this.deps.onChange();
     const root = this.root;
-    root.replaceChildren();
+    const body = this.body;
+    root.replaceChildren(
+      el('div', { class: 'handle' }, el('span', { class: 'grip' }), this.handleLabel, el('span', { class: 'chev' })),
+      body,
+    );
 
-    root.append(
+    body.append(
       el('div', { class: 'head' }, el('b', {}, 'Calibration'), el('span', { class: 'hint' }, 'C key or the << button')),
-      el('fieldset', {}, el('legend', {}, 'Status'), this.status),
+      this.section('Status', this.status),
     );
 
     const { flow } = this.deps;
-    root.append(
-      el(
-        'fieldset',
-        {},
-        el('legend', {}, 'Flow'),
+    body.append(
+      this.section(
+        'Flow',
         this.flowStatus,
         el(
           'div',
@@ -155,11 +195,9 @@ export class Panel {
       player.stopSequence();
       fn();
     };
-    root.append(
-      el(
-        'fieldset',
-        {},
-        el('legend', {}, 'Playback'),
+    body.append(
+      this.section(
+        'Playback',
         el(
           'div',
           { class: 'buttons' },
@@ -173,7 +211,7 @@ export class Panel {
     );
 
     const g = () => cal.global;
-    const global = el('fieldset', {}, el('legend', {}, 'Global placement'));
+    const global = this.section('Global placement');
     for (const b of [
       sliderRow('Scale', 0.25, 2.5, 0.001, () => g().scale, (v) => { g().scale = v; changed(); }),
       sliderRow('X', -0.5, 0.5, 0.001, () => g().x, (v) => { g().x = v; changed(); }),
@@ -182,7 +220,7 @@ export class Panel {
       this.bound.push(b);
       global.append(b.node);
     }
-    root.append(global);
+    body.append(global);
 
     const clipSelect = el('select');
     for (const c of CLIPS) clipSelect.append(el('option', { value: c.id }, c.id + ' (' + c.file + ')'));
@@ -191,7 +229,7 @@ export class Panel {
       this.refreshAll();
     });
     const a = () => cal.clips[this.selectedClip];
-    const clipSet = el('fieldset', {}, el('legend', {}, 'Clip adjust'), el('div', { class: 'row' }, el('label', {}, 'Clip'), clipSelect));
+    const clipSet = this.section('Clip adjust', el('div', { class: 'row' }, el('label', {}, 'Clip'), clipSelect));
     for (const b of [
       sliderRow('dx', -0.25, 0.25, 0.001, () => a().dx, (v) => { a().dx = v; changed(); }),
       sliderRow('dy', -0.25, 0.25, 0.001, () => a().dy, (v) => { a().dy = v; changed(); }),
@@ -200,31 +238,58 @@ export class Panel {
       this.bound.push(b);
       clipSet.append(b.node);
     }
-    root.append(clipSet);
+    body.append(clipSet);
 
     this.deviceSelect.addEventListener('change', () => {
       cal.camera.deviceId = this.deviceSelect.value;
       changed();
       void camera.start(cal.camera.deviceId);
     });
-    const mirror = checkRow('Mirror', () => cal.camera.mirror, (v) => { cal.camera.mirror = v; changed(); });
-    this.bound.push(mirror);
-    root.append(
-      el(
-        'fieldset',
-        {},
-        el('legend', {}, 'Camera'),
+    // Mirror and rotation are remembered per camera device.
+    const deviceCal = () => {
+      const key = cameraDeviceKey(camera.activeDeviceId);
+      return (cal.camera.byDevice[key] ??= {});
+    };
+    const mirror = checkRow('Mirror', () => cal.camera.mirror, (v) => {
+      cal.camera.mirror = v;
+      deviceCal().mirror = v;
+      changed();
+    });
+    for (const [v, label] of [['', 'Auto'], ['0', '0'], ['90', '90'], ['180', '180'], ['270', '270']]) {
+      this.rotationSelect.append(el('option', { value: v }, label));
+    }
+    this.rotationSelect.addEventListener('change', () => {
+      const v = this.rotationSelect.value;
+      const d = deviceCal();
+      if (v === '') delete d.rotation;
+      else d.rotation = +v as Rotation;
+      camera.manualRotation = d.rotation ?? null;
+      camera.updateRotation();
+      changed();
+    });
+    const rotation: Bound = {
+      node: el('div', { class: 'row' }, el('label', {}, 'Rotate'), this.rotationSelect),
+      refresh: () => {
+        const r = cal.camera.byDevice[cameraDeviceKey(camera.activeDeviceId)]?.rotation;
+        this.rotationSelect.value = r === undefined ? '' : String(r);
+      },
+    };
+    this.bound.push(mirror, rotation);
+    body.append(
+      this.section(
+        'Camera',
         el('div', { class: 'row' }, el('label', {}, 'Device'), this.deviceSelect),
         mirror.node,
+        rotation.node,
       ),
     );
 
     const outline = checkRow('Draw clip frame outline', () => cal.showOutline, (v) => { cal.showOutline = v; changed(); });
     this.bound.push(outline);
-    root.append(el('fieldset', {}, el('legend', {}, 'View'), outline.node));
+    body.append(this.section('View', outline.node));
 
     const r = () => cal.ring;
-    const ringSet = el('fieldset', {}, el('legend', {}, 'Floor ring'));
+    const ringSet = this.section('Floor ring');
     for (const b of [
       sliderRow('Center x', 0, 1, 0.001, () => r().cx, (v) => { r().cx = v; changed(); }),
       sliderRow('Center y', 0, 1, 0.001, () => r().cy, (v) => { r().cy = v; changed(); }),
@@ -237,19 +302,17 @@ export class Panel {
       this.bound.push(b);
       ringSet.append(b.node);
     }
-    root.append(ringSet);
+    body.append(ringSet);
 
     const { detection } = this.deps;
     const detEnable = checkRow('Enable detection', () => cal.detection.enabled, (v) => { cal.detection.enabled = v; changed(); });
     const detDebug = checkRow('Draw ankles and feet point', () => detection.debug, (v) => { detection.debug = v; });
     this.bound.push(detEnable, detDebug);
-    root.append(el('fieldset', {}, el('legend', {}, 'Detection'), this.detectionStatus, detEnable.node, detDebug.node));
+    body.append(this.section('Detection', this.detectionStatus, detEnable.node, detDebug.node));
 
-    root.append(
-      el(
-        'fieldset',
-        {},
-        el('legend', {}, 'Calibration JSON'),
+    body.append(
+      this.section(
+        'Calibration JSON',
         el(
           'div',
           { class: 'buttons' },
@@ -266,6 +329,47 @@ export class Panel {
         this.jsonBox,
       ),
     );
+  }
+
+  // Bottom sheet behavior on narrow viewports. The CSS decides when the
+  // handle and the one open section rule apply, so this runs everywhere.
+  private installSheet() {
+    const root = this.root;
+    const names = this.sections.map((s) => s.dataset.section ?? '');
+    if (!names.includes(this.sheet.section)) this.sheet.section = names[0] ?? '';
+    this.openSection(this.sheet.section, false);
+    root.classList.toggle('collapsed', this.sheet.collapsed);
+
+    const handle = root.querySelector('.handle') as HTMLElement;
+    handle.addEventListener('click', () => {
+      this.sheet.collapsed = !this.sheet.collapsed;
+      root.classList.toggle('collapsed', this.sheet.collapsed);
+      this.saveSheet();
+    });
+
+    const touched = (e: Event) => {
+      const f = (e.target as Element | null)?.closest('fieldset[data-section]') as HTMLFieldSetElement | null;
+      if (f && f.dataset.section) this.openSection(f.dataset.section);
+    };
+    this.body.addEventListener('pointerdown', touched);
+    this.body.addEventListener('input', touched);
+    this.body.addEventListener('change', touched);
+  }
+
+  private openSection(name: string, save = true) {
+    for (const s of this.sections) s.classList.toggle('open', s.dataset.section === name);
+    this.handleLabel.textContent = name;
+    if (this.sheet.section === name) return;
+    this.sheet.section = name;
+    if (save) this.saveSheet();
+  }
+
+  private saveSheet() {
+    try {
+      localStorage.setItem(PANEL_STORAGE_KEY, JSON.stringify(this.sheet));
+    } catch {
+      // storage unavailable
+    }
   }
 
   private exportToBox() {
@@ -318,7 +422,9 @@ export class Panel {
     const sel = this.deviceSelect;
     sel.replaceChildren(el('option', { value: '' }, 'Default (front camera)'));
     camera.devices.forEach((d, i) => {
-      sel.append(el('option', { value: d.deviceId }, d.label || 'Camera ' + (i + 1)));
+      const facing = FACING_LABEL[camera.facingById[d.deviceId]];
+      const label = (d.label || 'Camera ' + (i + 1)) + (facing ? ' (' + facing + ')' : '');
+      sel.append(el('option', { value: d.deviceId }, label));
     });
     sel.value = cal.camera.deviceId;
     if (sel.value !== cal.camera.deviceId) sel.value = '';
@@ -329,8 +435,12 @@ export class Panel {
     const { camera, player } = this.deps;
     const lines: string[] = [];
     if (camera.error) lines.push('camera: ' + camera.error);
-    else if (camera.stream) lines.push('camera: ' + camera.video.videoWidth + 'x' + camera.video.videoHeight);
-    else lines.push('camera: starting');
+    else if (camera.stream) {
+      let s = 'camera: ' + camera.video.videoWidth + 'x' + camera.video.videoHeight;
+      if (camera.facing) s += ' ' + FACING_LABEL[camera.facing];
+      if (camera.rotation) s += ', rotated ' + camera.rotation;
+      lines.push(s);
+    } else lines.push('camera: starting');
     for (const c of player.clips.values()) {
       let s: string;
       if (c.state === 'missing') s = 'MISSING, ' + c.error;

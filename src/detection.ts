@@ -119,8 +119,9 @@ export class Detection {
     const cal = this.cal;
     if (!this.running || !cal) return;
     this.poses = msg.poses.map((p) => {
-      const leftAnkle = cameraToStage(p.left.x, p.left.y, msg.w, msg.h, msg.mirror);
-      const rightAnkle = cameraToStage(p.right.x, p.right.y, msg.w, msg.h, msg.mirror);
+      const rot = this.camera.rotation;
+      const leftAnkle = cameraToStage(p.left.x, p.left.y, msg.w, msg.h, msg.mirror, rot);
+      const rightAnkle = cameraToStage(p.right.x, p.right.y, msg.w, msg.h, msg.mirror, rot);
       const leftVisible = p.left.visibility >= ANKLE_VISIBILITY_MIN;
       const rightVisible = p.right.visibility >= ANKLE_VISIBILITY_MIN;
       const feet = leftVisible && rightVisible

@@ -9,6 +9,7 @@ export const POSE_LOOP_MS = 10000;
 export const FIRST_FRAME_TIMEOUT_MS = 2000;
 
 export const STORAGE_KEY = 'heromirror.calibration.v1';
+export const PANEL_STORAGE_KEY = 'heromirror.panel.v1';
 
 // Used for the frame outline before a clip's metadata is known.
 export const FALLBACK_CLIP_ASPECT = 716 / 1284;

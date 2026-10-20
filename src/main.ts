@@ -1,5 +1,5 @@
 import './style.css';
-import { clipRect, loadCalibration, saveCalibration } from './calibration';
+import { applyCameraDefaults, clipRect, loadCalibration, saveCalibration } from './calibration';
 import { Camera } from './camera';
 import { ClipPlayer } from './clips';
 import { FALLBACK_CLIP_ASPECT, PHOTO_JPEG_QUALITY, RING_TINT_COLOR } from './constants';
@@ -24,8 +24,6 @@ const kioskMode = new URLSearchParams(location.search).get('kiosk') === '1';
 toggleButton.hidden = kioskMode;
 
 fitStage(stage, toggleButton);
-window.addEventListener('resize', () => fitStage(stage, toggleButton));
-window.addEventListener('orientationchange', () => setTimeout(() => fitStage(stage, toggleButton), 100));
 
 function showNotice(text: string) {
   notice.textContent = text;
@@ -44,6 +42,14 @@ try {
 }
 
 const camera = new Camera(renderer, videos);
+
+function refit() {
+  fitStage(stage, toggleButton);
+  camera.updateRotation();
+}
+window.addEventListener('resize', refit);
+window.addEventListener('orientationchange', () => setTimeout(refit, 100));
+window.visualViewport?.addEventListener('resize', refit);
 const player = new ClipPlayer(renderer, videos);
 export const ring = new FloorRing();
 export const detection = new Detection(camera);
@@ -53,7 +59,7 @@ const debugOverlay = new DebugOverlay(debugCanvas);
 function render(now: number, clean: boolean) {
   renderer.beginFrame();
   if (camera.upload(renderer)) {
-    renderer.drawCamera(camera.texture, camera.width, camera.height, cal.camera.mirror);
+    renderer.drawCamera(camera.texture, camera.width, camera.height, cal.camera.mirror, camera.rotation);
   } else {
     renderer.clear(0.13, 0.13, 0.15);
   }
@@ -119,10 +125,13 @@ const panel = new Panel({
 // Console handle for debugging and tests.
 (window as unknown as { kiosk: unknown }).kiosk = { ring, detection, player, camera, cal, flow };
 
+camera.onStarted = () => {
+  camera.manualRotation = applyCameraDefaults(cal, camera.activeDeviceId, camera.facing);
+  camera.updateRotation();
+};
 camera.onStatus = () => {
   showNotice(camera.error);
-  panel.refreshDevices();
-  panel.refreshStatus();
+  panel.refreshAll();
 };
 player.onChange = () => panel.refreshStatus();
 flow.onChange = () => panel.refreshStatus();

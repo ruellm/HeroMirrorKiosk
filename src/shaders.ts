@@ -8,7 +8,8 @@ void main() {
   v_uv = vec2(p.x, mix(p.y, 1.0 - p.y, u_flipY));
 }`;
 
-// Cover fit camera frame, optional horizontal mirror.
+// Cover fit camera frame, optional horizontal mirror, then u_rot quarter
+// turns clockwise on the raw frame.
 export const CAMERA_FS = `#version 300 es
 precision mediump float;
 in vec2 v_uv;
@@ -16,9 +17,13 @@ out vec4 o;
 uniform sampler2D u_tex;
 uniform vec2 u_scale;
 uniform float u_mirror;
+uniform int u_rot;
 void main() {
   vec2 uv = (v_uv - 0.5) * u_scale + 0.5;
   if (u_mirror > 0.5) uv.x = 1.0 - uv.x;
+  if (u_rot == 1) uv = vec2(uv.y, 1.0 - uv.x);
+  else if (u_rot == 2) uv = vec2(1.0 - uv.x, 1.0 - uv.y);
+  else if (u_rot == 3) uv = vec2(1.0 - uv.y, uv.x);
   o = vec4(texture(u_tex, uv).rgb, 1.0);
 }`;
 
