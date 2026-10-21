@@ -51,7 +51,7 @@ export interface ClipConfig {
 export const KEYTEST_DEFAULTS: KeySettings = {
   keyColor: '#00b140',
   keyMode: 'chromaDistance',
-  tolerance: 0.100,
+  tolerance: 0.232,
   softness: 0.080,
   spill: 1.0,
   spillBalance: 1.0,
